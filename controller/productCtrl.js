@@ -2,6 +2,12 @@ const Product = require("../models/productModel");
 const asyncHandler = require("express-async-handler");
 const { default: mongoose } = require("mongoose");
 const slugify = require('slugify');
+const validateMongodbId = require("../utils/validateMongodbid");
+
+
+const User = require("../models/userModel");
+const cloudinaryUploadImg = require("../utils/cloudinary");
+const fs = require("fs");
 
 const createProduct = asyncHandler(async (req,res) => {
     try {
@@ -22,6 +28,7 @@ const createProduct = asyncHandler(async (req,res) => {
 //product updation
 const updateProduct = asyncHandler(async (req,res) => {
     const id = req.params;
+    validateMongodbId(id);
     try {
         
         if(req.body.title) {
@@ -39,7 +46,8 @@ const updateProduct = asyncHandler(async (req,res) => {
 
 // copy updateProduct
 const deleteProduct = asyncHandler(async (req,res) => {
-    const { id } = req.params;
+    const { id } = req.params;          // {} nhi h actual video m we have added it
+    validateMongodbId(id); 
     try {
         
         const deleteProduct = await Product.findOneAndDelete(id);
@@ -54,6 +62,7 @@ const deleteProduct = asyncHandler(async (req,res) => {
 // fetch all products
 const getaProduct = asyncHandler(async (req,res) => {
     const { id } = req.params;
+    validateMongodbId(id);
     try {
         const findProduct = await Product.findById(id);
         res.json(findProduct);
@@ -178,4 +187,159 @@ const getaProduct = asyncHandler(async (req,res) => {
     });
     
 
-module.exports = { createProduct , getaProduct , getAllProduct , updateProduct ,deleteProduct };
+const addToWishList = asyncHandler(async (req,res) => {
+    // to add the product in wishList we need 2 things
+    const { _id } = req.user;   // so we need to pass authMiddleware from this route
+    const { prodId } = req.body;
+
+    try {
+        const user =await User.findById(_id);   //User ko import bhi krna h   // from here we will get our user who is logged in 
+        const alreadyadded = user.wishlist.find((id)=> id.toString() === prodId );
+        if(alreadyadded) {   // the product which we want to add ...if it is already this its user's wishlist then
+            let user = await User.findByIdAndUpdate(
+                _id, 
+                {
+                $pull: { wishlist: prodId },
+                },
+                {
+                    new: true,
+                }
+            );
+            res.json(user);
+        } 
+        else {                 // otherwise push
+            let user = await User.findByIdAndUpdate(
+                _id, 
+                {
+                $push: { wishlist: prodId },
+                },
+                {
+                    new: true,
+                }
+            );
+            res.json(user);
+        }
+
+    } 
+    catch (error) {
+        throw new Error(error);
+    }
+});
+
+const rating = asyncHandler(async (req,res) => {
+    const { _id } =  req.user;  // we need loggedIn user
+    const { star, prodId, comment } = req.body;
+    
+    try {
+        const product = await Product.findById(prodId);
+         let alreadyRated = product.ratings.find(
+             (userId) => userId.postedby.toString() === _id.toString()
+        );
+        if(alreadyRated) 
+        {
+            // first. we need to find the ratedProduct
+            const updateRating = await Product.updateOne(
+                {
+                ratings: {$elemMatch: alreadyRated },       // with the help of alreadyRated this we will find out our product rating
+                },
+                {
+                    $set: { "ratings.$.star": star, "ratings.$.comment": comment },
+                },
+                {
+                    new: true,
+                }
+            );
+            // res.json(updateRating);
+        }
+        else
+        {
+            // fresh rating functionality
+            const rateProduct = await Product.findByIdAndUpdate(
+                prodId, 
+                {
+                 $push: {
+                    ratings: {
+                        star: star,
+                        comment: comment,
+                        postedby: _id,
+                    },
+                  },
+                },
+               { new: true, }
+            );
+            // res.json(rateProduct);
+        }
+
+    const getallratings = await Product.findById(prodId);
+    let totalRating = getallratings.ratings.length;
+    let ratingsum = getallratings.ratings
+      .map((item) => item.star)
+      .reduce((prev,curr) => prev + curr , 0);
+    let acutalRating = Math.round(ratingsum / totalRating);
+    let finalproduct = await Product.findByIdAndUpdate(             // productModel.js m totalrating h that we need to update now
+        prodId, 
+        {
+        totalrating: acutalRating, 
+        },
+        { new: true }
+    );
+    res.json(finalproduct);
+
+    }
+    catch 
+    {
+        throw new Error(error);
+    }
+});
+
+
+
+const uploadImages = asyncHandler(async (req,res) => {
+   // console.log(req.files);
+   const { id } = req.params;   // this is for product.....by this we find our product and upload our images
+   validateMongodbId(id);
+   try
+   {
+       const uploader = (path) => cloudinaryUploadImg(path,"images");
+       const urls = [];
+       const files = req.files;
+       for(const file of files)
+       {
+           const { path } = file;
+           const newpath = await uploader(path);
+           console.log(newpath);
+           urls.push(newpath);
+           fs.unlinkSync(path);
+       }
+       const findProduct = await Product.findByIdAndUpdate(
+           id,
+            {
+            images: urls.map((file) => {
+               return file;
+            }),
+          },
+           {
+               new: true,
+           }
+                   //image:  it is in our model
+       );
+       res.json(findProduct);
+   }
+   catch (error) {
+       throw new Error(error);
+   }
+});
+
+module.exports = { createProduct , getaProduct , getAllProduct , updateProduct ,deleteProduct,
+     addToWishList , rating, uploadImages, };
+
+
+
+// validateMongodbId in this
+//         updateProduct
+//         deleteProduct
+//         getaProduct
+
+// this validateMongodbId bd m add kiya hmne (pta nii is file m only)
+
+        
